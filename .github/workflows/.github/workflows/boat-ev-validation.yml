@@ -1,0 +1,15 @@
+name: BOAT EV 自動検証
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: BOAT EVを起動して検証
+        run: |
+          curl --fail --retry 2 --max-time 240 \
+          "https://boat-ev-jp.onrender.com/api/validation-tick"
