@@ -11,5 +11,5 @@ jobs:
     steps:
       - name: BOAT EVを起動して検証
         run: |
-          curl --fail --retry 2 --max-time 240 -X POST /
+          curl --fail --retry 2 --max-time 240 -X POST \
           "https://boat-ev-jp.onrender.com/api/validation-tick"
