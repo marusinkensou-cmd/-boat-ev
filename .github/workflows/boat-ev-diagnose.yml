@@ -1,0 +1,19 @@
+name: BOAT EV 診断
+
+on:
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ZIPを展開
+        run: unzip -o boat-ev-render.zip -d extracted
+
+      - name: API確認
+        run: |
+          grep -nE "validation|/api/|route|do_GET|do_POST" extracted/app/server_v11.py || true
+          echo "----- validation engine -----"
+          grep -nE "^def |^class |__main__|validation" extracted/app/validation_engine_v166.py || true
