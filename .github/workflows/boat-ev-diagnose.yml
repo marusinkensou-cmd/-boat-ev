@@ -21,6 +21,7 @@ jobs:
             ev_engine_v08.py \
             race_decision_v08.py \
             dashboard_html_v09.py \
+            nationwide_board_v09.py \
             validation_engine_v166.py \
             validation_store_v166.py; do
             if [ -f "extracted/app/$f" ]; then
