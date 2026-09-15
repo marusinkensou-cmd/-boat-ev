@@ -9,6 +9,7 @@ permissions:
 jobs:
   patch:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,178 +19,322 @@ jobs:
           mkdir work
           unzip -q boat-ev-render.zip -d work
 
-      - name: EV判定を実用画面へ接続
+      - name: P162予測とEV判定を接続
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          p=Path("work/app/nationwide_board_v09.py")
-          s=p.read_text()
+          # ==========================================
+          # nationwide_board_v09.py
+          # ==========================================
+          p = Path("work/app/nationwide_board_v09.py")
+          s = p.read_text()
 
-          s=s.replace(
-          'from prediction_v162 import predict_race',
-          'from prediction_v162 import predict_race\nfrom ev_engine_v08 import latest_odds_snapshot, select_bets'
+          old = "from prediction_v162 import predict_race\n"
+          new = (
+              "from prediction_v162 import predict_race\n"
+              "from ev_engine_v08 import latest_odds_snapshot, select_bets\n"
           )
-
-          old='''        preds=pr.get("predictions",[])
-          state="DATA" if pr.get("status")!="ok" else ("FINAL" if pr.get("stage")=="final" else "PRE")
-          out.append({"race_id":rid,"venue":venue,"jcd":jcd,"race_no":rno,"deadline":dl.isoformat(),
-          '''
-
-          new='''        preds=pr.get("predictions",[])
-          state="DATA" if pr.get("status")!="ok" else ("FINAL" if pr.get("stage")=="final" else "PRE")
-
-          odds_at,odds_map=latest_odds_snapshot(con,rid)
-          prob_map={
-              str(x.get("combination")):float(x.get("predicted_prob"))
-              for x in preds
-              if x.get("combination") and x.get("predicted_prob") is not None
-          }
-
-          ev_bets=[]
-          ev_rows=[]
-          if prob_map and odds_map:
-              ev_bets,ev_rows=select_bets(
-                  prob_map,odds_map,
-                  ev_threshold=1.10,
-                  edge_threshold=0.10,
-                  max_bets=6,
-                  min_prob=0.01
-              )
-
-          if state=="DATA":
-              ev_status="DATA"
-              ev_label="判定不能"
-          elif not odds_map:
-              ev_status="NO_ODDS"
-              ev_label="オッズ未取得"
-          elif ev_bets:
-              ev_status="BUY"
-              ev_label="買い候補"
-          else:
-              ev_status="PASS"
-              ev_label="見送り"
-
-          best_ev=max(
-              (x.get("ev") for x in ev_rows if x.get("ev") is not None),
-              default=None
-          )
-
-          out.append({"race_id":rid,"venue":venue,"jcd":jcd,"race_no":rno,"deadline":dl.isoformat(),
-          '''
 
           if old not in s:
-              raise SystemExit("nationwide_board insertion point not found")
-          s=s.replace(old,new,1)
+              raise SystemExit("ERROR: prediction import not found")
+          s = s.replace(old, new, 1)
 
-          old2='''          "bets":preds,"predictions":preds,"bet_count":len(preds),"best_ev":None,
-          '''
+          marker = '''        state="DATA" if pr.get("status")!="ok" else ("FINAL" if pr.get("stage")=="final" else "PRE")
+        out.append({"race_id":rid,"venue":venue,"jcd":jcd,"race_no":rno,"deadline":dl.isoformat(),
+'''
 
-          new2='''          "bets":preds,"predictions":preds,"bet_count":len(preds),
-          "ev_status":ev_status,"ev_label":ev_label,
-          "ev_bets":ev_bets,"ev_rows":ev_rows,
-          "odds_captured_at":odds_at,"best_ev":best_ev,
-          '''
+          replacement = '''        state="DATA" if pr.get("status")!="ok" else ("FINAL" if pr.get("stage")=="final" else "PRE")
 
-          if old2 not in s:
-              raise SystemExit("nationwide_board output point not found")
-          s=s.replace(old2,new2,1)
+        # P162が出した3連単確率を、そのままEV計算へ使用する。
+        # 別モデルの確率とは混在させない。
+        odds_at,odds_map=latest_odds_snapshot(con,rid)
+
+        prob_map={}
+        for x in preds:
+            combo=x.get("combination")
+            prob=x.get("predicted_prob")
+            if combo and prob is not None:
+                try:
+                    prob_map[str(combo)]=float(prob)
+                except (TypeError,ValueError):
+                    pass
+
+        ev_bets=[]
+        ev_rows=[]
+
+        if prob_map and odds_map:
+            ev_bets,ev_rows=select_bets(
+                prob_map,
+                odds_map,
+                ev_threshold=1.10,
+                edge_threshold=0.10,
+                max_bets=6,
+                min_prob=0.01
+            )
+
+        if state=="DATA":
+            ev_status="DATA"
+            ev_label="判定不能"
+        elif not prob_map:
+            ev_status="DATA"
+            ev_label="予測確率不足"
+        elif not odds_map:
+            ev_status="NO_ODDS"
+            ev_label="オッズ未取得"
+        elif ev_bets:
+            ev_status="BUY"
+            ev_label="買い候補"
+        else:
+            ev_status="PASS"
+            ev_label="見送り"
+
+        best_ev=max(
+            (x.get("ev") for x in ev_rows if x.get("ev") is not None),
+            default=None
+        )
+
+        out.append({"race_id":rid,"venue":venue,"jcd":jcd,"race_no":rno,"deadline":dl.isoformat(),
+'''
+
+          if marker not in s:
+              raise SystemExit("ERROR: board insertion point not found")
+          s = s.replace(marker, replacement, 1)
+
+          marker = '''          "bets":preds,"predictions":preds,"bet_count":len(preds),"best_ev":None,
+'''
+
+          replacement = '''          "bets":preds,"predictions":preds,"bet_count":len(preds),
+          "ev_status":ev_status,
+          "ev_label":ev_label,
+          "ev_bets":ev_bets,
+          "ev_rows":ev_rows,
+          "odds_captured_at":odds_at,
+          "best_ev":round(best_ev,3) if best_ev is not None else None,
+'''
+
+          if marker not in s:
+              raise SystemExit("ERROR: board output point not found")
+          s = s.replace(marker, replacement, 1)
+
           p.write_text(s)
 
-          p=Path("work/app/pwa/app.js")
-          s=p.read_text()
+          # ==========================================
+          # pwa/app.js
+          # ==========================================
+          p = Path("work/app/pwa/app.js")
+          s = p.read_text()
 
-          old='''  if(FILTER==="buy") return r.grade!=="PASS";
+          marker = '''  if(FILTER==="buy") return r.grade!=="PASS";
           if(FILTER==="pass") return r.grade==="PASS";
           if(FILTER==="buy") return r.prediction_state==="FINAL";
           if(FILTER==="pass") return r.prediction_state==="PRE";
-          '''
+'''
 
-          new='''  if(FILTER==="buy") return r.ev_status==="BUY";
+          replacement = '''  if(FILTER==="buy") return r.ev_status==="BUY";
           if(FILTER==="pass") return r.ev_status==="PASS";
-          '''
+'''
 
-          if old not in s:
-              raise SystemExit("filter point not found")
-          s=s.replace(old,new,1)
+          if marker not in s:
+              raise SystemExit("ERROR: old filter block not found")
+          s = s.replace(marker, replacement, 1)
 
-          old2='''    const stage=missing?"データ不足":(r.prediction_state==="FINAL"?"直前予想":"事前予想");
-          '''
-
-          new2='''    const stage=missing?"データ不足":(r.prediction_state==="FINAL"?"直前予想":"事前予想");
-              const evLabel=r.ev_label||"判定不能";
-              const evClass=r.ev_status||"DATA";
-              const evRows=(r.ev_bets||[]).map(b=>
-                `<div class="bet"><div class="combo">${esc(b.combination)}</div><span>確率 ${fmtPct(b.predicted_prob)} / オッズ ${Number(b.market_odds).toFixed(1)}倍 / EV ${Number(b.ev).toFixed(2)}</span><strong>${b.qualifies?"買い候補":""}</strong></div>`
-              ).join("");
-              const evSummary=r.ev_status==="NO_ODDS"
-                ? `<div class="evbox NO_ODDS"><b>オッズ未取得</b><span>EV判定はまだ行いません</span></div>`
-                : `<div class="evbox ${esc(evClass)}"><b>${esc(evLabel)}</b><span>${r.best_ev!=null?"最高EV "+Number(r.best_ev).toFixed(2):""}</span></div>`;
-              const evDetails=evRows?`<details class="betDetails"><summary>EV買い候補を見る</summary>${evRows}</details>`:"";
-          '''
-
-          if old2 not in s:
-              raise SystemExit("render insertion point not found")
-          s=s.replace(old2,new2,1)
-
-          old3='''${risk}${confLine}${formLine}${betDetails}${infoDetails}</section>`;'''
-          new3='''${risk}${evSummary}${evDetails}${confLine}${formLine}${betDetails}${infoDetails}</section>`;'''
-
-          if old3 not in s:
-              raise SystemExit("card insertion point not found")
-          s=s.replace(old3,new3,1)
-          p.write_text(s)
-
-          p=Path("work/app/pwa/index.html")
-          s=p.read_text()
-
-          s=s.replace(
-          '<button data-filter="buy">直前予想</button>',
-          '<button data-filter="buy">買い候補</button>'
-          ).replace(
-          '<button data-filter="pass">事前予想</button>',
-          '<button data-filter="pass">見送り</button>'
-          ).replace(
-          '<div class="metric"><b id="buyCount">0</b><span>直前予想</span></div>',
-          '<div class="metric"><b id="buyCount">0</b><span>買い候補</span></div>'
-          ).replace(
-          '<div class="metric"><b id="passCount">0</b><span>事前予想</span></div>',
-          '<div class="metric"><b id="passCount">0</b><span>見送り</span></div>'
+          s = s.replace(
+              'document.getElementById("buyCount").textContent=active.filter(r=>r.prediction_state==="FINAL").length;',
+              'document.getElementById("buyCount").textContent=active.filter(r=>r.ev_status==="BUY").length;',
+              1
           )
 
-          s=s.replace(
-          '</style>',
-          '''.evbox{margin:10px 0;padding:11px 12px;border:1px solid var(--line);border-radius:14px;display:flex;justify-content:space-between;align-items:center}
-          .evbox b{font-size:18px}.evbox span{font-size:12px;color:var(--muted)}
+          s = s.replace(
+              'document.getElementById("passCount").textContent=active.filter(r=>r.prediction_state==="PRE").length;',
+              'document.getElementById("passCount").textContent=active.filter(r=>r.ev_status==="PASS").length;',
+              1
+          )
+
+          marker = '''    const stage=missing?"データ不足":(r.prediction_state==="FINAL"?"直前予想":"事前予想");
+'''
+
+          replacement = '''    const stage=missing?"データ不足":(r.prediction_state==="FINAL"?"直前予想":"事前予想");
+
+    const evLabel=r.ev_label||"判定不能";
+    const evClass=r.ev_status||"DATA";
+
+    const evRows=(r.ev_bets||[]).map(b=>{
+      const combo=b.combination||b.combo||"-";
+      const odds=(b.odds ?? b.market_odds);
+      const prob=b.predicted_prob;
+      const ev=b.ev;
+
+      return `<div class="bet">
+        <div class="combo">${esc(combo)}</div>
+        <span>
+          推定確率 ${prob!=null?fmtPct(prob):"-"}
+          / オッズ ${odds!=null?Number(odds).toFixed(1)+"倍":"-"}
+          / EV ${ev!=null?Number(ev).toFixed(2):"-"}
+        </span>
+      </div>`;
+    }).join("");
+
+    let evSummary="";
+
+    if(r.ev_status==="BUY"){
+      evSummary=`<div class="evbox BUY">
+        <b>買い候補</b>
+        <span>${r.best_ev!=null?"最高EV "+Number(r.best_ev).toFixed(2):""}</span>
+      </div>`;
+    }else if(r.ev_status==="PASS"){
+      evSummary=`<div class="evbox PASS">
+        <b>見送り</b>
+        <span>${r.best_ev!=null?"最高EV "+Number(r.best_ev).toFixed(2):"基準未達"}</span>
+      </div>`;
+    }else if(r.ev_status==="NO_ODDS"){
+      evSummary=`<div class="evbox NO_ODDS">
+        <b>オッズ未取得</b>
+        <span>EV判定はまだ行いません</span>
+      </div>`;
+    }else{
+      evSummary=`<div class="evbox DATA">
+        <b>${esc(evLabel)}</b>
+        <span>EV判定不能</span>
+      </div>`;
+    }
+
+    const evDetails=evRows
+      ? `<details class="betDetails">
+           <summary>EV買い候補を見る</summary>
+           ${evRows}
+         </details>`
+      : "";
+'''
+
+          if marker not in s:
+              raise SystemExit("ERROR: render insertion point not found")
+          s = s.replace(marker, replacement, 1)
+
+          marker = '''${risk}${confLine}${formLine}${betDetails}${infoDetails}</section>`;'''
+
+          replacement = '''${risk}${evSummary}${evDetails}${confLine}${formLine}${betDetails}${infoDetails}</section>`;'''
+
+          if marker not in s:
+              raise SystemExit("ERROR: card output point not found")
+          s = s.replace(marker, replacement, 1)
+
+          p.write_text(s)
+
+          # ==========================================
+          # pwa/index.html
+          # ==========================================
+          p = Path("work/app/pwa/index.html")
+          s = p.read_text()
+
+          s = s.replace(
+              '<button data-filter="buy">直前予想</button>',
+              '<button data-filter="buy">買い候補</button>'
+          )
+
+          s = s.replace(
+              '<button data-filter="pass">事前予想</button>',
+              '<button data-filter="pass">見送り</button>'
+          )
+
+          s = s.replace(
+              '<div class="metric"><b id="buyCount">0</b><span>直前予想</span></div>',
+              '<div class="metric"><b id="buyCount">0</b><span>買い候補</span></div>'
+          )
+
+          s = s.replace(
+              '<div class="metric"><b id="passCount">0</b><span>事前予想</span></div>',
+              '<div class="metric"><b id="passCount">0</b><span>見送り</span></div>'
+          )
+
+          css = '''
+          .evbox{
+            margin:10px 0;
+            padding:11px 12px;
+            border:1px solid var(--line);
+            border-radius:14px;
+            display:flex;
+            justify-content:space-between;
+            align-items:center
+          }
+          .evbox b{font-size:18px}
+          .evbox span{font-size:12px;color:var(--muted)}
           .evbox.BUY b{color:var(--good)}
           .evbox.PASS b{color:var(--pass)}
           .evbox.NO_ODDS b{color:var(--warn)}
-          </style>'''
+          '''
+
+          if "</style>" not in s:
+              raise SystemExit("ERROR: style end not found")
+
+          s = s.replace("</style>", css + "\n</style>", 1)
+
+          # Safari/PWAキャッシュ対策
+          import re
+          s = re.sub(
+              r'/app\\.js\\?v=\\d+',
+              '/app.js?v=168',
+              s,
+              count=1
           )
 
-          s=s.replace('/app.js?v=164','/app.js?v=168')
           p.write_text(s)
           PY
 
-      - name: 構文チェック
+      - name: Python構文チェック
         run: |
           python -m py_compile \
             work/app/nationwide_board_v09.py \
             work/app/ev_engine_v08.py \
             work/app/prediction_v162.py
 
-      - name: ZIPを再作成
+      - name: 実装内容チェック
+        run: |
+          grep -q 'ev_status' work/app/nationwide_board_v09.py
+          grep -q 'latest_odds_snapshot' work/app/nationwide_board_v09.py
+          grep -q 'select_bets' work/app/nationwide_board_v09.py
+          grep -q 'r.ev_status==="BUY"' work/app/pwa/app.js
+          grep -q '最高EV' work/app/pwa/app.js
+          grep -q '推定確率' work/app/pwa/app.js
+          grep -q 'オッズ未取得' work/app/pwa/app.js
+
+          echo "EV IMPLEMENTATION CHECK: OK"
+
+      - name: 元ZIPを退避
+        run: |
+          cp boat-ev-render.zip boat-ev-render-before-ev-ui.zip
+
+      - name: 新ZIPを作成
         run: |
           cd work
           zip -qr ../boat-ev-render-new.zip .
           cd ..
           mv boat-ev-render-new.zip boat-ev-render.zip
 
-      - name: 変更をコミット
+      - name: ZIP内容最終確認
+        run: |
+          rm -rf verify
+          mkdir verify
+          unzip -q boat-ev-render.zip -d verify
+
+          python -m py_compile verify/app/nationwide_board_v09.py
+
+          grep -q 'ev_status' verify/app/nationwide_board_v09.py
+          grep -q '最高EV' verify/app/pwa/app.js
+
+          echo "FINAL ZIP CHECK: OK"
+
+      - name: 本番ZIPをコミット
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           git add boat-ev-render.zip
-          git diff --cached --quiet && exit 0
-          git commit -m "Connect P162 predictions to EV decision UI"
+
+          if git diff --cached --quiet; then
+            echo "変更なし"
+            exit 0
+          fi
+
+          git commit -m "Implement P162 EV decision UI"
           git push
