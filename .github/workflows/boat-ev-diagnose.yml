@@ -12,8 +12,29 @@ jobs:
       - name: ZIPを展開
         run: unzip -o boat-ev-render.zip -d extracted
 
-      - name: API確認
+      - name: 実用化ソースを収集
         run: |
-          grep -nE "validation|/api/|route|do_GET|do_POST" extracted/app/server_v11.py || true
-          echo "----- validation engine -----"
-          grep -nE "^def |^class |__main__|validation" extracted/app/validation_engine_v166.py || true
+          mkdir -p diagnostic-source
+          for f in \
+            server_v11.py \
+            prediction_v162.py \
+            ev_engine_v08.py \
+            race_decision_v08.py \
+            dashboard_html_v09.py \
+            validation_engine_v166.py \
+            validation_store_v166.py; do
+            if [ -f "extracted/app/$f" ]; then
+              cp "extracted/app/$f" diagnostic-source/
+            fi
+          done
+          if [ -d extracted/app/pwa ]; then
+            cp -R extracted/app/pwa diagnostic-source/pwa
+          fi
+          find diagnostic-source -maxdepth 3 -type f -print
+
+      - name: 診断ソースを保存
+        uses: actions/upload-artifact@v4
+        with:
+          name: boat-ev-diagnostic-source
+          path: diagnostic-source
+          if-no-files-found: error
