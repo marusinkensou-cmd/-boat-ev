@@ -1,0 +1,36 @@
+name: BOAT EV live auto check
+
+on:
+  push:
+    paths:
+      - '.github/workflows/boat-ev-live-auto-check.yml'
+  workflow_dispatch:
+
+jobs:
+  live-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Render deploy
+        run: sleep 90
+      - name: Trigger live venue refresh and capture trace
+        shell: bash
+        run: |
+          set -u
+          BASE='https://boat-ev-jp.onrender.com'
+          echo '=== health ===' | tee live-check.txt
+          curl -sS -w '\nHTTP=%{http_code}\n' "$BASE/api/health" | tee -a live-check.txt
+          echo '=== refresh JCD24 ===' | tee -a live-check.txt
+          curl -sS -X POST -H 'Content-Type: application/json' -d '{"selected_jcds":["24"]}' -w '\nHTTP=%{http_code}\n' "$BASE/api/refresh" | tee -a live-check.txt
+          for i in $(seq 1 12); do
+            sleep 10
+            echo "=== status $i ===" | tee -a live-check.txt
+            S=$(curl -sS "$BASE/api/refresh-status" || true)
+            echo "$S" | tee -a live-check.txt
+            echo "$S" | grep -q '"running": false' && break || true
+          done
+          echo '=== board ===' | tee -a live-check.txt
+          curl -sS "$BASE/api/board" | tee -a live-check.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boat-ev-live-auto-check
+          path: live-check.txt
