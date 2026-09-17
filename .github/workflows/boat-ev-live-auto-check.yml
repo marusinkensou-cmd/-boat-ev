@@ -30,7 +30,7 @@ jobs:
           done
           echo '=== board ===' | tee -a live-check.txt
           curl -sS "$BASE/api/board" | tee -a live-check.txt
-          echo '\n=== odds-patch-check-2 ===' | tee -a live-check.txt
+          echo '\n=== confirmed-table-parser-check ===' | tee -a live-check.txt
       - uses: actions/upload-artifact@v4
         with:
           name: boat-ev-live-auto-check
