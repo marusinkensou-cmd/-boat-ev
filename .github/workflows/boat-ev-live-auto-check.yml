@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for Render deploy
-        run: sleep 90
+        run: sleep 15
       - name: Trigger live venue refresh and capture trace
         shell: bash
         run: |
@@ -19,9 +19,9 @@ jobs:
           BASE='https://boat-ev-jp.onrender.com'
           echo '=== health ===' | tee live-check.txt
           curl -sS -w '\nHTTP=%{http_code}\n' "$BASE/api/health" | tee -a live-check.txt
-          echo '=== refresh JCD24 ===' | tee -a live-check.txt
+          echo '=== focused refresh JCD24 ===' | tee -a live-check.txt
           curl -sS -X POST -H 'Content-Type: application/json' -d '{"selected_jcds":["24"]}' -w '\nHTTP=%{http_code}\n' "$BASE/api/refresh" | tee -a live-check.txt
-          for i in $(seq 1 12); do
+          for i in $(seq 1 15); do
             sleep 10
             echo "=== status $i ===" | tee -a live-check.txt
             S=$(curl -sS "$BASE/api/refresh-status" || true)
@@ -30,7 +30,7 @@ jobs:
           done
           echo '=== board ===' | tee -a live-check.txt
           curl -sS "$BASE/api/board" | tee -a live-check.txt
-          echo '\n=== corrected-odds-storage-live-check ===' | tee -a live-check.txt
+          echo '\n=== focused-live-odds-verification ===' | tee -a live-check.txt
       - uses: actions/upload-artifact@v4
         with:
           name: boat-ev-live-auto-check
