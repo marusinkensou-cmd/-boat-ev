@@ -14,6 +14,17 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def _durable_backup(con):
+    """Best-effort durable copy. Runtime must continue if Drive is not configured/unavailable."""
+    try:
+        from durable_backup_v01 import status, drive_backup
+        if status().get('configured'):
+            return drive_backup(con)
+    except Exception as e:
+        print('[DURABLE_BACKUP] MASTER error '+repr(e), flush=True)
+    return None
+
+
 def ensure_lifecycle_schema(con):
     con.execute("""
     CREATE TABLE IF NOT EXISTS racer_master_history (
@@ -38,6 +49,7 @@ def save_master_fact(con, racer_id, fact_kind, as_of_date, value, source):
                      value_text=excluded.value_text,captured_at=excluded.captured_at""",
                 (str(racer_id),str(fact_kind),str(as_of_date),None if value is None else str(value),str(source),_now()))
     con.commit()
+    _durable_backup(con)
 
 
 def traced_race_ids(con):
