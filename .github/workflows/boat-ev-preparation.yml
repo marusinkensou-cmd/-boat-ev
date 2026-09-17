@@ -1,0 +1,40 @@
+name: BOAT EV staged pre-race preparation
+
+on:
+  workflow_dispatch:
+    inputs:
+      race_date:
+        description: 'YYYY-MM-DD; blank = Japan tomorrow'
+        required: false
+        default: ''
+  schedule:
+    # Official next-day information appears by venue at different times.
+    # 09/11/13 UTC = 18/20/22 JST. 21 UTC = 06 JST same-day fallback.
+    - cron: '0 9 * * *'
+    - cron: '0 11 * * *'
+    - cron: '0 13 * * *'
+    - cron: '0 21 * * *'
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prepare all published venues without creating user history
+        env:
+          INPUT_DATE: ${{ inputs.race_date }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+          if [ -n "${INPUT_DATE:-}" ]; then
+            RACE_DATE="$INPUT_DATE"
+          elif [ "${EVENT_NAME}" = "schedule" ] && [ "${SCHEDULE:-}" = "0 21 * * *" ]; then
+            RACE_DATE=$(TZ=Asia/Tokyo date +%F)
+          else
+            RACE_DATE=$(TZ=Asia/Tokyo date -d tomorrow +%F)
+          fi
+          echo "Preparing race_date=${RACE_DATE}"
+          curl --fail-with-body --retry 2 --retry-delay 5 --max-time 900 \
+            -X POST -H 'Content-Type: application/json' \
+            --data "{\"race_date\":\"${RACE_DATE}\"}" \
+            https://boat-ev-jp.onrender.com/api/prepare-all
