@@ -14,6 +14,17 @@ import json
 from datetime import datetime, timezone
 
 
+def _durable_backup(con):
+    """Best-effort durable copy after a TRACE mutation."""
+    try:
+        from durable_backup_v01 import status, drive_backup
+        if status().get('configured'):
+            return drive_backup(con)
+    except Exception as e:
+        print('[DURABLE_BACKUP] TRACE error '+repr(e), flush=True)
+    return None
+
+
 def ensure_trace_schema(con):
     con.execute("""
     CREATE TABLE IF NOT EXISTS race_trace_snapshots (
@@ -62,7 +73,7 @@ def save_snapshot(con, race_id: str, kind: str, payload: dict, immutable: bool=F
                    ON CONFLICT(race_id,snapshot_kind) DO UPDATE SET
                      captured_at=excluded.captured_at,payload_json=excluded.payload_json,immutable=excluded.immutable""",
                 (race_id,kind,_now(),json.dumps(payload,ensure_ascii=False,separators=(",",":")),1 if immutable else 0))
-    con.commit()
+    con.commit(); _durable_backup(con)
     return {"saved":True,"immutable":bool(immutable)}
 
 
@@ -82,7 +93,7 @@ def save_actual_bets(con, race_id: str, bets: list[dict]):
                        VALUES(?,?,?,?,?)
                        ON CONFLICT(race_id,combo) DO UPDATE SET stake_yen=excluded.stake_yen,placed_at=excluded.placed_at""",
                     (race_id,combo,stake,now,str(b.get("source","user"))))
-    con.commit()
+    con.commit(); _durable_backup(con)
 
 
 def settle_actual_bets(con, race_id: str, result_combo: str, payout_per_100_yen: int):
@@ -102,7 +113,7 @@ def settle_actual_bets(con, race_id: str, result_combo: str, payout_per_100_yen:
                      stake_yen=excluded.stake_yen,return_yen=excluded.return_yen,profit_yen=excluded.profit_yen,
                      hit=excluded.hit,settled_at=excluded.settled_at,source=excluded.source""",
                 (race_id,result,int(payout_per_100_yen),stake,ret,profit,hit,_now(),"official"))
-    con.commit()
+    con.commit(); _durable_backup(con)
     return {"race_id":race_id,"result_combo":result,"stake_yen":stake,"return_yen":ret,"profit_yen":profit,"hit":bool(hit)}
 
 
