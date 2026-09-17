@@ -15,10 +15,12 @@ def prepare_all_venues(con, race_date=None, cache_dir='cache/live'):
     """
     from today_discovery_v12 import discover_today
     from racelist_live_v12 import seed_venue_races, refresh_racelist
-    from data_lifecycle_v01 import ensure_lifecycle_schema
+    from data_lifecycle_v01 import ensure_lifecycle_schema, cleanup_temp_before
 
     ensure_lifecycle_schema(con)
-    race_date = race_date or datetime.now(JST).date().isoformat()
+    today = datetime.now(JST).date().isoformat()
+    cleanup = cleanup_temp_before(con, today)
+    race_date = race_date or today
     venues, discovery_meta = discover_today(race_date, cache_dir)
     result = {
         'ok': True,
@@ -27,6 +29,7 @@ def prepare_all_venues(con, race_date=None, cache_dir='cache/live'):
         'scope': 'all_officially_published_venues',
         'history_effect': 'none',
         'trace_created': False,
+        'temp_cleanup': cleanup,
         'venues': [],
         'errors': [],
         'discovery': discovery_meta,
