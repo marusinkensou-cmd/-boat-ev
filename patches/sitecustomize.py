@@ -31,4 +31,25 @@ try:
         print('[PATCH_PWA] installed focused EV screen',flush=True)
 except Exception as e:
     print('[PATCH_PWA] error '+repr(e),flush=True)
+
+# The board used to infer active venues only from today's local DB. On a fresh
+# Render deploy that DB can be empty even while official races are still live.
+# Patch App.board so the selector is sourced from BOAT RACE's official daily
+# index; race details remain lazy and are seeded only after the user refreshes
+# a selected venue.
+server='/opt/render/project/src/app/server_v11.py'
+try:
+    if os.path.isfile(server):
+        text=open(server,encoding='utf-8').read()
+        old='''    def board(self):\n        con=sqlite3.connect(self.db)\n        try:\n            now=datetime.now(JST)\n            return {"generated_at":now.isoformat(),"board":build_board(con,now)}\n        finally:\n            con.close()\n'''
+        new='''    def board(self):\n        con=sqlite3.connect(self.db)\n        try:\n            now=datetime.now(JST)\n            active=[]\n            discovery_error=None\n            try:\n                from today_discovery_v12 import discover_today\n                active,_=discover_today(now.date().isoformat(),"cache/live")\n            except Exception as e:\n                discovery_error=f"{type(e).__name__}: {e}"\n            return {"generated_at":now.isoformat(),"active_venues":active,"active_venues_source":"official_daily_index","discovery_error":discovery_error,"board":build_board(con,now)}\n        finally:\n            con.close()\n'''
+        if old in text:
+            open(server,'w',encoding='utf-8').write(text.replace(old,new,1))
+            print('[PATCH_SERVER] board active venues use official daily index',flush=True)
+        elif 'active_venues_source' in text:
+            print('[PATCH_SERVER] already installed',flush=True)
+        else:
+            print('[PATCH_SERVER] target block not found',flush=True)
+except Exception as e:
+    print('[PATCH_SERVER] error '+repr(e),flush=True)
 print('[PATCH_BOOT] forced='+','.join(sorted(FORCED_PATCH_MODULES)),flush=True)
