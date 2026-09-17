@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       jcd:
-        description: 'Venue JCD (default Toda 02)'
+        description: 'Venue JCD (default Omura 24)'
         required: false
-        default: '02'
+        default: '24'
 
 jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
-      - name: Probe live BOAT EV
+      - name: Exercise live BOAT EV flow
         env:
           JCD: ${{ inputs.jcd }}
         run: |
@@ -22,23 +22,39 @@ jobs:
           echo "run_utc=$(date -u +%FT%TZ)" >> "$OUT"
           echo "jcd=${JCD}" >> "$OUT"
           echo >> "$OUT"
-          for path in \
-            "/" \
-            "/api/refresh?jcd=${JCD}" \
-            "/api/refresh-live?jcd=${JCD}" \
-            "/api/update?jcd=${JCD}" \
-            "/api/board?jcd=${JCD}"; do
-            echo "=== ${path} ===" >> "$OUT"
-            code=$(curl -sS --retry 2 --retry-delay 3 --max-time 240 \
-              -o /tmp/body.txt -w '%{http_code}' \
-              "https://boat-ev-jp.onrender.com${path}")
+
+          probe_get() {
+            path="$1"
+            echo "=== GET ${path} ===" >> "$OUT"
+            code=$(curl -sS --retry 2 --retry-delay 3 --max-time 240 -o /tmp/body.txt -w '%{http_code}' "https://boat-ev-jp.onrender.com${path}")
             echo "HTTP=${code}" >> "$OUT"
-            head -c 12000 /tmp/body.txt >> "$OUT" 2>/dev/null || true
-            echo >> "$OUT"
-            echo >> "$OUT"
+            head -c 20000 /tmp/body.txt >> "$OUT" 2>/dev/null || true
+            echo >> "$OUT"; echo >> "$OUT"
+          }
+
+          probe_get "/api/health"
+          probe_get "/api/board"
+
+          echo "=== POST /api/refresh ===" >> "$OUT"
+          code=$(curl -sS --retry 1 --max-time 300 -o /tmp/body.txt -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' \
+            --data "{\"selected_jcds\":[\"${JCD}\"]}" \
+            "https://boat-ev-jp.onrender.com/api/refresh")
+          echo "HTTP=${code}" >> "$OUT"
+          cat /tmp/body.txt >> "$OUT"; echo >> "$OUT"; echo >> "$OUT"
+
+          for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            sleep 5
+            echo "=== GET /api/refresh-status poll=${i} ===" >> "$OUT"
+            code=$(curl -sS --max-time 120 -o /tmp/body.txt -w '%{http_code}' "https://boat-ev-jp.onrender.com/api/refresh-status")
+            echo "HTTP=${code}" >> "$OUT"
+            cat /tmp/body.txt >> "$OUT"; echo >> "$OUT"; echo >> "$OUT"
+            if grep -Eq '"running"[[:space:]]*:[[:space:]]*false' /tmp/body.txt; then break; fi
           done
+
+          probe_get "/api/board"
+          probe_get "/api/stats"
           cat "$OUT"
-          exit 0
 
       - name: Upload smoke result
         uses: actions/upload-artifact@v4
