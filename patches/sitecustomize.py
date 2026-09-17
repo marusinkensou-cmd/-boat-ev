@@ -1,17 +1,11 @@
 import importlib.abc
 import importlib.util
 import os
+import shutil
 import sys
 
 PATCH_DIR = '/opt/render/project/src/patches'
-
-# The service starts with `cd app && python server_v11.py`. Python places the
-# script directory (app/) at sys.path[0], so path order alone cannot reliably
-# override modules inside app/. Intercept only the modules intentionally patched.
-FORCED_PATCH_MODULES = {
-    'refresh_service_v13',
-    'official_live_v10',
-}
+FORCED_PATCH_MODULES = {'refresh_service_v13','official_live_v10'}
 
 class _PatchFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
@@ -23,10 +17,18 @@ class _PatchFinder(importlib.abc.MetaPathFinder):
         return importlib.util.spec_from_file_location(fullname, filename)
 
 sys.meta_path.insert(0, _PatchFinder())
-
-# Helper modules that exist only under patches/ remain normally importable.
-if PATCH_DIR in sys.path:
-    sys.path.remove(PATCH_DIR)
+if PATCH_DIR in sys.path: sys.path.remove(PATCH_DIR)
 sys.path.insert(0, PATCH_DIR)
 
-print('[PATCH_BOOT] forced=' + ','.join(sorted(FORCED_PATCH_MODULES)), flush=True)
+# The build unpacks the legacy app from ZIP. Replace only the user-facing PWA
+# with the focused EV screen after unpacking, while keeping the proven backend.
+src=os.path.join(PATCH_DIR,'pwa')
+dst='/opt/render/project/src/app/pwa'
+try:
+    if os.path.isdir(src) and os.path.isdir(dst):
+        for name in ('index.html','app.js'):
+            shutil.copy2(os.path.join(src,name),os.path.join(dst,name))
+        print('[PATCH_PWA] installed focused EV screen',flush=True)
+except Exception as e:
+    print('[PATCH_PWA] error '+repr(e),flush=True)
+print('[PATCH_BOOT] forced='+','.join(sorted(FORCED_PATCH_MODULES)),flush=True)
