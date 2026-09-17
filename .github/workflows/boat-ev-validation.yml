@@ -1,15 +1,13 @@
-name: BOAT EV 自動検証
+name: BOAT EV legacy validation (manual only)
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 jobs:
   validation:
     runs-on: ubuntu-latest
     steps:
-      - name: BOAT EVを起動して検証
+      - name: Run legacy validation manually
         run: |
           curl --fail --retry 2 --max-time 240 -X POST \
           "https://boat-ev-jp.onrender.com/api/validation-tick"
