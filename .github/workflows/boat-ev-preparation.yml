@@ -7,6 +7,9 @@ on:
         description: 'YYYY-MM-DD; blank = Japan tomorrow'
         required: false
         default: ''
+  push:
+    paths:
+      - '.github/workflows/boat-ev-preparation.yml'
   schedule:
     # Official next-day information appears by venue at different times.
     # 09/11/13 UTC = 18/20/22 JST. 21 UTC = 06 JST same-day fallback.
