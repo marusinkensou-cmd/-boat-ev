@@ -9,6 +9,7 @@ from live_quality_v13 import mark,status
 from virtual_ledger_v14 import stats
 from official_live_v10 import refresh_one as refresh_odds
 from ev_engine_v08 import evaluate_race
+from race_interactions_v01 import build_interaction_features
 
 JST=ZoneInfo("Asia/Tokyo")
 
@@ -16,6 +17,33 @@ def mins_to_deadline(now,deadline):
     hh,mm=map(int,deadline[:5].split(":"))
     dl=now.replace(hour=hh,minute=mm,second=0,microsecond=0)
     return (dl-now).total_seconds()/60
+
+def _interaction_trace_from_board(board,rid):
+    race=next((r for r in board if r.get("race_id")==rid),None)
+    if not race:
+        return {"status":"unavailable","race_id":rid,"reason":"race_not_on_board"}
+    boats=[]
+    ex_courses=race.get("exhibition_courses") or {}
+    for b in race.get("boats") or []:
+        boat=b.get("boat") or b.get("boat_no")
+        if boat is None: continue
+        ex=ex_courses.get(str(boat),ex_courses.get(boat,{})) or {}
+        boats.append({
+            "boat":boat,
+            "course":ex.get("exhibition_course") or b.get("course") or boat,
+            "avg_st":b.get("avg_st"),
+            "exhibition_st":ex.get("exhibition_st") or b.get("exhibition_st"),
+            "exhibition_time":ex.get("exhibition_time") or b.get("exhibition_time"),
+            "motor_rate":b.get("motor_rate") or b.get("motor_2ren"),
+            "local_win_rate":b.get("local_win_rate"),
+            "national_win_rate":b.get("national_win_rate"),
+            "class_rank":b.get("class_rank") or b.get("class"),
+            "is_dash":bool(ex.get("is_dash",b.get("is_dash",False))),
+        })
+    out=build_interaction_features(boats)
+    out["race_id"]=rid
+    out["source"]="same_race_board_state"
+    return out
 
 def seed_today(con,now,cache_dir="cache/live",selected_jcds=None):
     date=now.date().isoformat()
@@ -92,5 +120,8 @@ def refresh_for_iphone(con,now=None,max_races=8,horizon_min=90,cache_dir="cache/
     board=build_board(con,now)
     for r in board:
         q=status(con,r["race_id"]); r["quality"]=q; r["data_ready"]=q["racelist_ok"]
+    for item in updates:
+        try: item["interaction_features"]=_interaction_trace_from_board(board,item["race_id"])
+        except Exception as e: item["interaction_features"]={"status":"error","race_id":item["race_id"],"error":str(e)}
     report("done",races_updated=len(updates),venues_found=len(seeded))
     return {"generated_at":now.isoformat(),"settlement":{"skipped_for_speed":True},"plans_saved":0,"stats_today":stats(con,today),"stats_all":stats(con),"venues_found":len(seeded),"selected_jcds":[str(selected_jcds[0]).zfill(2)] if selected_jcds else [v["jcd"] for v in seeded],"venue_errors":venue_errors,"races_updated":len(updates),"refresh_scope":"selected_venue_60min" if selected_jcds else ("normal" if cand else ("nearest" if selected else "none")),"updates":updates,"board":board}
