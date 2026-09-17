@@ -2,6 +2,11 @@ name: BOAT EV manual smoke test
 
 on:
   workflow_dispatch:
+    inputs:
+      jcd:
+        description: 'Venue JCD (default Toda 02)'
+        required: false
+        default: '02'
 
 jobs:
   smoke:
@@ -12,6 +17,22 @@ jobs:
           curl --fail --retry 3 --retry-delay 5 --max-time 120 \
             https://boat-ev-jp.onrender.com/ >/tmp/home.txt
           echo "HOME_OK"
-      - name: Show response headers
+
+      - name: Probe API routes
+        env:
+          JCD: ${{ inputs.jcd }}
         run: |
-          curl -sS -I --retry 2 --max-time 60 https://boat-ev-jp.onrender.com/ | head -20
+          set +e
+          for path in \
+            "/api/refresh?jcd=${JCD}" \
+            "/api/refresh-live?jcd=${JCD}" \
+            "/api/update?jcd=${JCD}" \
+            "/api/board?jcd=${JCD}"; do
+            echo "=== ${path} ==="
+            code=$(curl -sS --retry 1 --max-time 240 -o /tmp/body.txt -w '%{http_code}' \
+              "https://boat-ev-jp.onrender.com${path}")
+            echo "HTTP=${code}"
+            head -c 4000 /tmp/body.txt || true
+            echo
+          done
+          exit 0
