@@ -13,6 +13,7 @@ from race_interactions_v01 import build_interaction_features
 from race_context_features_v01 import build_race_context_features
 from venue_environment_v01 import build_environment_features
 from race_trace_v01 import save_snapshot, freeze_predeadline, cumulative_actual_stats
+from official_beforeinfo_fallback_v01 import fetch_official_beforeinfo
 
 JST=ZoneInfo("Asia/Tokyo")
 
@@ -25,52 +26,37 @@ def _race_from_board(board,rid):
     return next((r for r in board if r.get("race_id")==rid),None)
 
 def _boats_from_race(race):
-    boats=[]
-    ex_courses=race.get("exhibition_courses") or {}
+    boats=[]; ex_courses=race.get("exhibition_courses") or {}
     for b in race.get("boats") or []:
         boat=b.get("boat") or b.get("boat_no")
         if boat is None: continue
         ex=ex_courses.get(str(boat),ex_courses.get(boat,{})) or {}
-        boats.append({
-            "boat":boat,"racer_id":b.get("racer_id"),
-            "course":ex.get("exhibition_course") or b.get("course") or boat,
-            "actual_course":ex.get("exhibition_course") or b.get("course") or boat,
-            "avg_st":b.get("avg_st"),
-            "exhibition_st":ex.get("exhibition_st") or b.get("exhibition_st"),
-            "exhibition_time":ex.get("exhibition_time") or b.get("exhibition_time"),
-            "motor_rate":b.get("motor_rate") or b.get("motor_2ren"),
-            "local_win_rate":b.get("local_win_rate"),"national_win_rate":b.get("national_win_rate"),
-            "class_rank":b.get("class_rank") or b.get("class"),"is_dash":bool(ex.get("is_dash",b.get("is_dash",False))),
-            "weight":b.get("weight"),"adjust_weight":b.get("adjust_weight"),"tilt":b.get("tilt"),
-            "propeller_changed":b.get("propeller_changed",False),"parts_changed":b.get("parts_changed") or [],
-            "previous_race_no":b.get("previous_race_no"),"previous_course":b.get("previous_course"),
-            "previous_st":b.get("previous_st"),"previous_finish":b.get("previous_finish"),
-        })
+        boats.append({"boat":boat,"racer_id":b.get("racer_id"),"course":ex.get("exhibition_course") or b.get("course") or boat,"actual_course":ex.get("exhibition_course") or b.get("course") or boat,"avg_st":b.get("avg_st"),"exhibition_st":ex.get("exhibition_st") or b.get("exhibition_st"),"exhibition_time":ex.get("exhibition_time") or b.get("exhibition_time"),"motor_rate":b.get("motor_rate") or b.get("motor_2ren"),"local_win_rate":b.get("local_win_rate"),"national_win_rate":b.get("national_win_rate"),"class_rank":b.get("class_rank") or b.get("class"),"is_dash":bool(ex.get("is_dash",b.get("is_dash",False))),"weight":b.get("weight"),"adjust_weight":b.get("adjust_weight"),"tilt":b.get("tilt"),"propeller_changed":b.get("propeller_changed",False),"parts_changed":b.get("parts_changed") or [],"previous_race_no":b.get("previous_race_no"),"previous_course":b.get("previous_course"),"previous_st":b.get("previous_st"),"previous_finish":b.get("previous_finish")})
     return boats
 
 def _full_trace_from_board(board,rid,jcd):
     race=_race_from_board(board,rid)
     if not race: return {"status":"unavailable","race_id":rid,"reason":"race_not_on_board"}
-    boats=_boats_from_race(race)
-    weather=race.get("weather") or {}
-    return {
-        "race_id":rid,"source":"same_race_board_state","status":"measurement_only",
-        "interaction_features":build_interaction_features(boats),
-        "race_context_features":build_race_context_features(boats,weather),
-        "venue_environment":build_environment_features(jcd,weather,race.get("environment") or {}),
-    }
+    boats=_boats_from_race(race); weather=race.get("weather") or {}
+    return {"race_id":rid,"source":"same_race_board_state","status":"measurement_only","interaction_features":build_interaction_features(boats),"race_context_features":build_race_context_features(boats,weather),"venue_environment":build_environment_features(jcd,weather,race.get("environment") or {})}
+
+def _legacy_beforeinfo_complete(result):
+    if not isinstance(result,dict): return False
+    for key in ("parsed_exhibition","exhibition_count","exhibition_rows","rows"):
+        v=result.get(key)
+        if isinstance(v,int) and v>=6: return True
+        if isinstance(v,(list,tuple)) and len(v)>=6: return True
+    return False
 
 def seed_today(con,now,cache_dir="cache/live",selected_jcds=None):
     date=now.date().isoformat()
-    if selected_jcds: venues=[{"jcd":str(j).zfill(2),"venue":VENUES.get(str(j).zfill(2),str(j).zfill(2))} for j in selected_jcds]
-    else: venues,_=discover_today(date,cache_dir)
+    venues=[{"jcd":str(j).zfill(2),"venue":VENUES.get(str(j).zfill(2),str(j).zfill(2))} for j in selected_jcds] if selected_jcds else discover_today(date,cache_dir)[0]
     ok=[];err=[]
     for v in venues:
         jcd=v["jcd"]
         try:
             cnt=con.execute("SELECT COUNT(*) FROM races WHERE race_date=? AND jcd=? AND deadline IS NOT NULL",(date,jcd)).fetchone()[0]
-            need_seed=(cnt==0) if selected_jcds else (cnt<12)
-            if need_seed: seed_venue_races(con,date,jcd,cache_dir)
+            if (cnt==0) if selected_jcds else (cnt<12): seed_venue_races(con,date,jcd,cache_dir)
             ok.append(v)
         except Exception as e: err.append({"jcd":jcd,"venue":v["venue"],"error":str(e)})
     return ok,err
@@ -81,8 +67,7 @@ def refresh_for_iphone(con,now=None,max_races=8,horizon_min=90,cache_dir="cache/
         if progress:
             try: progress(stage,extra)
             except Exception: pass
-    report("discovering"); seeded,venue_errors=seed_today(con,now,cache_dir,selected_jcds); report("seeded",venues_found=len(seeded))
-    today=now.date().isoformat()
+    report("discovering"); seeded,venue_errors=seed_today(con,now,cache_dir,selected_jcds); report("seeded",venues_found=len(seeded)); today=now.date().isoformat()
     rows=con.execute("SELECT race_id,jcd,race_no,deadline FROM races WHERE race_date=? AND deadline IS NOT NULL ORDER BY deadline,jcd,race_no",(today,)).fetchall()
     if selected_jcds:
         allowed={str(j).zfill(2) for j in selected_jcds}; rows=[row for row in rows if str(row[1]).zfill(2) in allowed]
@@ -96,14 +81,21 @@ def refresh_for_iphone(con,now=None,max_races=8,horizon_min=90,cache_dir="cache/
     selected=[row for row in cand if row[0]<=60] if selected_jcds else (cand[:max_races] if cand else fallback[:min(4,max_races)])
     updates=[]; report("selected",races_total=len(selected),venues_requested=len(selected_jcds or []),venues_found=len(seeded))
     for idx,(mins,rid,jcd,rno) in enumerate(selected,start=1):
-        report("race_start",race_index=idx,races_total=len(selected),jcd=jcd,race_no=rno)
-        item={"race_id":rid,"jcd":jcd,"race_no":rno,"minutes":round(mins,1)}
+        report("race_start",race_index=idx,races_total=len(selected),jcd=jcd,race_no=rno); item={"race_id":rid,"jcd":jcd,"race_no":rno,"minutes":round(mins,1)}
         try:
             entry_count=con.execute("SELECT COUNT(*) FROM entries WHERE race_id=?",(rid,)).fetchone()[0]
             if entry_count>=6: item["racelist"]={"cached":True,"entries":entry_count}; mark(con,rid,"racelist_ok",True)
             else: item["racelist"]=refresh_racelist(con,today,jcd,rno,cache_dir); mark(con,rid,"racelist_ok",True)
         except Exception as e: item["racelist_error"]=str(e); mark(con,rid,"racelist_ok",False,str(e))
-        try: item["beforeinfo"]=refresh_beforeinfo_v13(con,today,jcd,rno,cache_dir); mark(con,rid,"beforeinfo_ok",True)
+        try:
+            legacy=refresh_beforeinfo_v13(con,today,jcd,rno,cache_dir); item["beforeinfo"]=legacy
+            if not _legacy_beforeinfo_complete(legacy):
+                fb=fetch_official_beforeinfo(today,jcd,rno); item["beforeinfo_fallback"]=fb
+                # Fallback is diagnostic/feature input until DB column mapping is verified. Never silently claim DB persistence.
+                item["beforeinfo_source"]="official_fallback" if fb.get("ready") else "legacy_incomplete"
+                mark(con,rid,"beforeinfo_ok",bool(fb.get("ready")),None if fb.get("ready") else "official_beforeinfo_not_ready")
+            else:
+                item["beforeinfo_source"]="legacy"; mark(con,rid,"beforeinfo_ok",True)
         except Exception as e: item["beforeinfo_error"]=str(e); mark(con,rid,"beforeinfo_ok",False,str(e))
         try: item["odds"]=refresh_odds(con,today,jcd,rno,cache_dir)
         except Exception as e: item["odds_error"]=str(e)
@@ -116,13 +108,14 @@ def refresh_for_iphone(con,now=None,max_races=8,horizon_min=90,cache_dir="cache/
         q=status(con,r["race_id"]); r["quality"]=q; r["data_ready"]=q["racelist_ok"]
     for item in updates:
         try:
-            trace=_full_trace_from_board(board,item["race_id"],item["jcd"]); item["feature_trace"]=trace
+            trace=_full_trace_from_board(board,item["race_id"],item["jcd"])
+            if (item.get("beforeinfo_fallback") or {}).get("ready"):
+                trace["official_beforeinfo_fallback"]=item["beforeinfo_fallback"]
+            item["feature_trace"]=trace
             payload={"race_id":item["race_id"],"captured_before_deadline":True,"minutes_to_deadline":item["minutes"],"provisional_model":True,"features":trace,"ev":item.get("ev",{}),"quality":item.get("quality",{})}
             item["trace_saved"]=save_snapshot(con,item["race_id"],"latest_predeadline",payload,immutable=False)
-            # Freeze only when real odds/EV are present; never freeze a PRE/incomplete state merely because time is short.
-            ev=item.get("ev") or {}; has_odds=bool(ev.get("odds_captured_at")); has_rows=bool(ev.get("rows"))
-            if item["minutes"]<=10 and has_odds and has_rows:
-                item["final_predeadline_frozen"]=freeze_predeadline(con,item["race_id"],payload)
+            ev=item.get("ev") or {}; has_odds=bool(ev.get("odds_captured_at")); has_rows=bool(ev.get("rows")); before_ready=bool(item.get("quality",{}).get("beforeinfo_ok"))
+            if item["minutes"]<=10 and before_ready and has_odds and has_rows: item["final_predeadline_frozen"]=freeze_predeadline(con,item["race_id"],payload)
             else: item["final_predeadline_frozen"]={"saved":False,"reason":"not_final_ready"}
         except Exception as e: item["trace_error"]=str(e)
     report("done",races_updated=len(updates),venues_found=len(seeded))
