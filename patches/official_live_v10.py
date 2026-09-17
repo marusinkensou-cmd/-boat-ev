@@ -1,156 +1,159 @@
 from __future__ import annotations
 
-"""BOAT RACE official trifecta-odds acquisition patch.
+"""Official BOAT RACE trifecta odds adapter for BOAT EV.
 
-Keeps the legacy refresh_one API.  Official PC odds are laid out as six
-parallel first-boat columns, so parsing is done from table rows rather than by
-flattening the whole page.  Only a complete, self-consistent set of all 120
-legal trifecta combinations is persisted.
+Important invariants:
+- Read the semantic 20 x 6 oddsPoint matrix, not screen text layout.
+- Reconstruct first -> second -> third exactly as BOAT RACE displays it.
+- Accept only the complete legal set of 120 trifecta combinations.
+- Store using the existing BOAT EV schema: snapshot_id + first/second/third_boat.
 """
 
-from datetime import datetime
-from html import unescape
-from zoneinfo import ZoneInfo
+import hashlib
 import re
-import urllib.request
+import time
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+from bs4 import BeautifulSoup
 
-JST = ZoneInfo("Asia/Tokyo")
-
-
-def _digits_date(date):
-    return str(date).replace("-", "")[:8]
-
-
-def _fetch(url):
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 BOAT-EV/1.0"})
-    with urllib.request.urlopen(req, timeout=12) as res:
-        raw = res.read()
-    for enc in ("utf-8", "cp932", "shift_jis"):
-        try:
-            return raw.decode(enc)
-        except UnicodeDecodeError:
-            pass
-    return raw.decode("utf-8", errors="replace")
+BASE = "https://www.boatrace.jp/owpc/pc/race"
+USER_AGENT = "Mozilla/5.0 (compatible; BOATRACE-EV-Research/1.0)"
+MIN_INTERVAL_SEC = 2.0
+_last_fetch = 0.0
 
 
-def _cell_text(cell):
-    s = re.sub(r"<[^>]+>", " ", cell)
-    s = unescape(s).replace("\xa0", " ")
-    return re.sub(r"\s+", " ", s).strip()
+def official_url(kind, date, jcd, race_no):
+    page = {"odds3t": "odds3t", "racelist": "racelist", "beforeinfo": "beforeinfo"}[kind]
+    return f"{BASE}/{page}?" + urlencode({"rno": race_no, "jcd": jcd, "hd": date.replace("-", "")})
 
 
-def _extract_odds(html):
-    """Parse BOAT RACE's six parallel first-boat columns.
+def fetch_html(url, cache_dir="cache/live", max_age_sec=45, timeout=15):
+    global _last_fetch
+    cache = Path(cache_dir)
+    cache.mkdir(parents=True, exist_ok=True)
+    p = cache / (hashlib.sha256(url.encode()).hexdigest() + ".html")
+    if p.exists() and time.time() - p.stat().st_mtime <= max_age_sec:
+        return p.read_text(encoding="utf-8", errors="replace"), "cache"
+    wait = MIN_INTERVAL_SEC - (time.time() - _last_fetch)
+    if wait > 0:
+        time.sleep(wait)
+    req = Request(url, headers={"User-Agent": USER_AGENT, "Accept-Language": "ja,en;q=0.7"})
+    with urlopen(req, timeout=timeout) as r:
+        raw = r.read()
+        print(f"[LIVE_FETCH] status={getattr(r,'status',None)} bytes={len(raw)} url={url}", flush=True)
+    _last_fetch = time.time()
+    text = raw.decode("utf-8", errors="replace")
+    p.write_text(text, encoding="utf-8")
+    return text, "network"
 
-    Each first-boat block represents the remaining 5 second boats × 4 third
-    boats = 20 odds.  We reconstruct combos from the displayed second/third
-    boat labels and validate the legal 120-combination key set before use.
+
+def _num(s):
+    try:
+        return float(s.replace(",", "").strip())
+    except Exception:
+        return None
+
+
+def parse_deadlines(html):
+    soup = BeautifulSoup(html, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    pos = text.find("締切予定時刻")
+    target = text[pos:pos+600] if pos >= 0 else text
+    times = re.findall(r"\b(?:[01]\d|2[0-3]):[0-5]\d\b", target)
+    return {i: t for i, t in enumerate(times[:12], 1)}
+
+
+def parse_trifecta_odds(html):
+    """Return {'123': odds, ...} from the official semantic odds matrix.
+
+    The visual design can vary.  We deliberately ignore colors, rowspans and
+    rendered grouping.  The official PC table exposes actual odds as
+    td.oddsPoint: 20 ordered second/third rows x six first-boat columns.
     """
-    tables = re.findall(r"<table\b[\s\S]*?</table>", html, flags=re.I)
-    best = {}
-    for table in tables:
+    soup = BeautifulSoup(html, "html.parser")
+    best = None
+    for table in soup.find_all("table"):
         rows = []
-        for tr in re.findall(r"<tr\b[\s\S]*?</tr>", table, flags=re.I):
-            cells = [_cell_text(x) for x in re.findall(r"<t[dh]\b[^>]*>([\s\S]*?)</t[dh]>", tr, flags=re.I)]
-            if cells:
-                rows.append(cells)
-        if not rows:
-            continue
-
-        # Official desktop table repeats a 4-row third-boat cycle for each
-        # second boat and places first boats 1..6 in parallel columns.
-        # Instead of depending on CSS classes, read numeric cell streams per
-        # first-boat column.  A valid block must reconstruct exactly 20 combos.
-        text_rows = rows
-        candidate = {}
-        # Flatten each row into tokens while preserving row order. The rendered
-        # table has groups of (second, third, odds) for each of six first boats.
-        for cells in text_rows:
-            toks = []
-            for c in cells:
-                toks.extend(re.findall(r"(?<![0-9.])(?:[1-6]|[0-9]+(?:\.[0-9]+)?)(?![0-9.])", c))
-            # Common official row: 18 tokens = 6 × (second, third, odds).
-            if len(toks) >= 18:
-                # take consecutive triples that are structurally valid; infer
-                # first boat from horizontal group index 1..6.
-                triples = []
-                for i in range(0, min(len(toks), 18), 3):
-                    if i + 2 >= len(toks): break
-                    triples.append(toks[i:i+3])
-                if len(triples) == 6:
-                    for first, (second, third, val) in enumerate(triples, start=1):
-                        if second not in "123456" or third not in "123456":
-                            continue
-                        if len({str(first), second, third}) != 3:
-                            continue
-                        try: odd = float(val)
-                        except Exception: continue
-                        if odd > 0:
-                            candidate[f"{first}{second}{third}"] = odd
-
-        if len(candidate) > len(best):
-            best = candidate
-        if len(candidate) == 120:
+        for tr in table.select("tbody tr"):
+            vals = []
+            for td in tr.select("td.oddsPoint"):
+                v = _num(td.get_text(" ", strip=True))
+                if v is not None and v > 0:
+                    vals.append(v)
+            if vals:
+                rows.append(vals)
+        if len(rows) == 20 and all(len(r) == 6 for r in rows):
+            best = rows
             break
 
-    legal = {f"{a}{b}{c}" for a in range(1,7) for b in range(1,7) for c in range(1,7) if len({a,b,c}) == 3}
-    if set(best) != legal:
-        return {}
-    return best
+    if best is None:
+        print("[ODDS_PARSE] semantic_matrix_not_found", flush=True)
+        raise ValueError("official trifecta semantic matrix not found")
+
+    odds = {}
+    for first in range(1, 7):
+        vals = [row[first-1] for row in best]
+        k = 0
+        for second in range(1, 7):
+            if second == first:
+                continue
+            for third in range(1, 7):
+                if third == first or third == second:
+                    continue
+                odds[f"{first}{second}{third}"] = vals[k]
+                k += 1
+
+    legal = {
+        f"{a}{b}{c}"
+        for a in range(1, 7)
+        for b in range(1, 7)
+        for c in range(1, 7)
+        if len({a, b, c}) == 3
+    }
+    if set(odds) != legal or len(odds) != 120:
+        raise ValueError(f"official trifecta reconstruction failed: {len(odds)}/120")
+    print(f"[ODDS_PARSE] parsed=120 sample123={odds.get('123')} sample654={odds.get('654')}", flush=True)
+    return odds
 
 
-def _table_columns(con, table):
-    try:
-        return [r[1] for r in con.execute(f"PRAGMA table_info({table})").fetchall()]
-    except Exception:
-        return []
+def upsert_deadlines(con, race_date, jcd, deadlines):
+    for rno, t in deadlines.items():
+        rid = f"{race_date.replace('-', '')}-{jcd}-{rno:02d}"
+        con.execute(
+            """INSERT INTO races(race_id,race_date,jcd,race_no,deadline,status)
+               VALUES(?,?,?,?,?,'scheduled')
+               ON CONFLICT(race_date,jcd,race_no)
+               DO UPDATE SET deadline=excluded.deadline""",
+            (rid, race_date, jcd, rno, t),
+        )
+    con.commit()
 
 
-def _insert_dynamic(con, table, values):
-    cols = _table_columns(con, table)
-    if not cols: return False
-    use = {k:v for k,v in values.items() if k in cols}
-    if not use: return False
-    names = list(use)
-    con.execute(f"INSERT INTO {table} ({','.join(names)}) VALUES ({','.join(['?']*len(names))})", [use[n] for n in names])
-    return True
+def store_odds(con, race_id, odds, fetched_at=None):
+    fetched_at = fetched_at or datetime.now().astimezone().isoformat(timespec="seconds")
+    cur = con.execute("INSERT INTO odds_snapshots(race_id,fetched_at) VALUES(?,?)", (race_id, fetched_at))
+    sid = cur.lastrowid
+    for combo, val in odds.items():
+        a, b, c = map(int, combo)
+        con.execute(
+            """INSERT INTO odds_trifecta
+               (snapshot_id,first_boat,second_boat,third_boat,odds)
+               VALUES(?,?,?,?,?)""",
+            (sid, a, b, c, val),
+        )
+    con.commit()
+    return sid
 
 
-def refresh_one(con, date, jcd, rno, cache_dir="cache/live"):
-    hd = _digits_date(date); jcd = str(jcd).zfill(2); rno = int(rno)
-    urls = [
-        f"https://www.boatrace.jp/owpc/pc/race/odds3t?hd={hd}&jcd={jcd}&rno={rno}",
-        f"https://www.boatrace.jp/owsp/sp/race/odds3t?hd={hd}&jcd={jcd}&rno={rno}",
-    ]
-    last_error=None; odds={}; source_url=None
-    for url in urls:
-        try:
-            parsed = _extract_odds(_fetch(url))
-            if len(parsed) > len(odds): odds, source_url = parsed, url
-            if len(parsed) == 120: break
-        except Exception as e:
-            last_error=str(e)
-    captured_at=datetime.now(JST).isoformat()
-    if len(odds) != 120:
-        return {"ok":False,"status":"NO_ODDS","count":len(odds),"source_url":source_url,"error":last_error}
-
-    race_id=f"{hd}-{jcd}-{rno:02d}"
-    stored=0
-    try:
-        con.execute("BEGIN")
-    except Exception: pass
-    try:
-        if _table_columns(con,"odds_trifecta"):
-            for combo, odd in odds.items():
-                if _insert_dynamic(con,"odds_trifecta",{
-                    "race_id":race_id,"combination":combo,"combo":combo,
-                    "odds":odd,"odds_value":odd,"captured_at":captured_at,
-                    "fetched_at":captured_at,"source":"boatrace_official","source_url":source_url}): stored += 1
-        if _table_columns(con,"odds_snapshots"):
-            _insert_dynamic(con,"odds_snapshots",{"race_id":race_id,"captured_at":captured_at,"fetched_at":captured_at,"source":"boatrace_official","source_url":source_url,"count":120})
-        con.commit()
-    except Exception as e:
-        try: con.rollback()
-        except Exception: pass
-        return {"ok":False,"status":"STORE_ERROR","count":120,"stored":stored,"source_url":source_url,"error":str(e)}
-    return {"ok":True,"status":"OK","count":120,"stored":stored,"captured_at":captured_at,"source_url":source_url}
+def refresh_one(con, race_date, jcd, race_no, cache_dir="cache/live"):
+    url = official_url("odds3t", race_date, jcd, race_no)
+    html, source = fetch_html(url, cache_dir=cache_dir)
+    deadlines = parse_deadlines(html)
+    if deadlines:
+        upsert_deadlines(con, race_date, jcd, deadlines)
+    odds = parse_trifecta_odds(html)
+    rid = f"{race_date.replace('-', '')}-{jcd}-{int(race_no):02d}"
+    sid = store_odds(con, rid, odds)
+    return {"ok": True, "status": "OK", "race_id": rid, "snapshot_id": sid, "odds_count": 120, "source": source, "url": url}
