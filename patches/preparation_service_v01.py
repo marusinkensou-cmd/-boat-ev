@@ -7,21 +7,26 @@ JST = ZoneInfo('Asia/Tokyo')
 
 
 def prepare_all_venues(con, race_date=None, cache_dir='cache/live'):
-    """Prepare stable race/entry data for every officially published venue.
+    """Prepare TEMP race/entry data for every officially published venue.
 
-    This is operational predata only. It does not create prediction snapshots,
-    freeze a race, settle a race, or mark a race as user-used.
+    TEMP preparation must never create TRACE prediction snapshots, freeze a race,
+    settle a race, or mark a race as user-used. Reusable racer facts belong in
+    MASTER and are added separately with temporal provenance.
     """
     from today_discovery_v12 import discover_today
     from racelist_live_v12 import seed_venue_races, refresh_racelist
+    from data_lifecycle_v01 import ensure_lifecycle_schema
 
+    ensure_lifecycle_schema(con)
     race_date = race_date or datetime.now(JST).date().isoformat()
     venues, discovery_meta = discover_today(race_date, cache_dir)
     result = {
         'ok': True,
         'race_date': race_date,
+        'data_class': 'TEMP',
         'scope': 'all_officially_published_venues',
         'history_effect': 'none',
+        'trace_created': False,
         'venues': [],
         'errors': [],
         'discovery': discovery_meta,
