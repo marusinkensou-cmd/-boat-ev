@@ -91,14 +91,18 @@ def refresh_for_iphone(con,now=None,max_races=8,horizon_min=90,cache_dir="cache/
             legacy=refresh_beforeinfo_v13(con,today,jcd,rno,cache_dir); item["beforeinfo"]=legacy
             if not _legacy_beforeinfo_complete(legacy):
                 fb=fetch_official_beforeinfo(today,jcd,rno); item["beforeinfo_fallback"]=fb
-                # Fallback is diagnostic/feature input until DB column mapping is verified. Never silently claim DB persistence.
                 item["beforeinfo_source"]="official_fallback" if fb.get("ready") else "legacy_incomplete"
                 mark(con,rid,"beforeinfo_ok",bool(fb.get("ready")),None if fb.get("ready") else "official_beforeinfo_not_ready")
             else:
                 item["beforeinfo_source"]="legacy"; mark(con,rid,"beforeinfo_ok",True)
         except Exception as e: item["beforeinfo_error"]=str(e); mark(con,rid,"beforeinfo_ok",False,str(e))
-        try: item["odds"]=refresh_odds(con,today,jcd,rno,cache_dir)
-        except Exception as e: item["odds_error"]=str(e)
+        try:
+            print(f"[ODDS_CALL] race_id={rid} jcd={jcd} rno={rno}",flush=True)
+            item["odds"]=refresh_odds(con,today,jcd,rno,cache_dir)
+            print(f"[ODDS_OK] race_id={rid} result={item['odds']}",flush=True)
+        except Exception as e:
+            item["odds_error"]=str(e)
+            print(f"[ODDS_ERROR] race_id={rid} type={type(e).__name__} error={e}",flush=True)
         try:
             ev=evaluate_race(con,rid); item["ev"]={"status":ev.get("status"),"model":ev.get("model"),"provisional_model":True,"bets":ev.get("bets",[]),"odds_captured_at":ev.get("odds_captured_at"),"rows":ev.get("rows",[])}
         except Exception as e: item["ev"]={"status":"error","provisional_model":True,"error":str(e),"bets":[]}
@@ -109,8 +113,7 @@ def refresh_for_iphone(con,now=None,max_races=8,horizon_min=90,cache_dir="cache/
     for item in updates:
         try:
             trace=_full_trace_from_board(board,item["race_id"],item["jcd"])
-            if (item.get("beforeinfo_fallback") or {}).get("ready"):
-                trace["official_beforeinfo_fallback"]=item["beforeinfo_fallback"]
+            if (item.get("beforeinfo_fallback") or {}).get("ready"): trace["official_beforeinfo_fallback"]=item["beforeinfo_fallback"]
             item["feature_trace"]=trace
             payload={"race_id":item["race_id"],"captured_before_deadline":True,"minutes_to_deadline":item["minutes"],"provisional_model":True,"features":trace,"ev":item.get("ev",{}),"quality":item.get("quality",{})}
             item["trace_saved"]=save_snapshot(con,item["race_id"],"latest_predeadline",payload,immutable=False)
