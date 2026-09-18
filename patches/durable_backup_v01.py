@@ -14,6 +14,7 @@ import sqlite3
 import urllib.parse
 import urllib.request
 import urllib.error
+import hashlib
 from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1
@@ -96,10 +97,15 @@ def _oauth_configured():
 def _access_token():
     if not _oauth_configured():
         raise RuntimeError('Google Drive OAuth is not configured')
+    client_id = os.environ['GOOGLE_DRIVE_CLIENT_ID'].strip()
+    client_secret = os.environ['GOOGLE_DRIVE_CLIENT_SECRET'].strip()
+    refresh_token = os.environ['GOOGLE_DRIVE_REFRESH_TOKEN'].strip()
+    print('[DURABLE_OAUTH] client_id_suffix=%s client_id_sha256=%s secret_len=%d refresh_len=%d' % (
+        client_id[-28:], hashlib.sha256(client_id.encode()).hexdigest()[:12], len(client_secret), len(refresh_token)))
     body = urllib.parse.urlencode({
-        'client_id': os.environ['GOOGLE_DRIVE_CLIENT_ID'].strip(),
-        'client_secret': os.environ['GOOGLE_DRIVE_CLIENT_SECRET'].strip(),
-        'refresh_token': os.environ['GOOGLE_DRIVE_REFRESH_TOKEN'].strip(),
+        'client_id': client_id,
+        'client_secret': client_secret,
+        'refresh_token': refresh_token,
         'grant_type': 'refresh_token',
     }).encode()
     req = urllib.request.Request('https://oauth2.googleapis.com/token', data=body, method='POST')
