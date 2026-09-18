@@ -7,7 +7,7 @@ from live_quality_v13 import mark,status
 from virtual_ledger_v14 import stats
 from official_live_v10 import refresh_one as refresh_odds
 from ev_engine_v08 import evaluate_race
-from race_trace_v01 import save_snapshot, freeze_predeadline, cumulative_actual_stats
+from race_trace_v01 import cumulative_actual_stats
 JST=ZoneInfo('Asia/Tokyo')
 def mins_to_deadline(now,deadline):
     hh,mm=map(int,deadline[:5].split(':')); dl=now.replace(hour=hh,minute=mm,second=0,microsecond=0); return (dl-now).total_seconds()/60
@@ -41,10 +41,6 @@ def _evaluate_one(con,now,today,mins,rid,jcd,rno,cache_dir,progress=None):
         ev=evaluate_race(con,rid);item['ev']={'status':ev.get('status'),'model':ev.get('model'),'provisional_model':True,'bets':ev.get('bets',[]),'odds_captured_at':ev.get('odds_captured_at'),'rows':ev.get('rows',[])}
     except Exception as e:item['ev']={'status':'error','provisional_model':True,'error':str(e),'bets':[],'rows':[]}
     item['quality']=status(con,rid)
-    try:
-        payload={'race_id':rid,'captured_before_deadline':True,'minutes_to_deadline':round(mins,1),'provisional_model':True,'ev':item['ev'],'quality':item['quality']};item['trace_saved']=save_snapshot(con,rid,'latest_predeadline',payload,immutable=False)
-        if mins<=10 and item['ev'].get('odds_captured_at') and item['ev'].get('rows'):item['final_predeadline_frozen']=freeze_predeadline(con,rid,payload)
-    except Exception as e:item['trace_error']=str(e)
     return item
 
 def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/live',progress=None,selected_jcds=None):
