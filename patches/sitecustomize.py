@@ -66,5 +66,27 @@ try:
         if '/api/prepare-all' not in text:text=text.replace(marker,route+marker,1)
         open(server,'w',encoding='utf-8').write(text)
         print('[PATCH_SERVER] official board + independent all-venue preparation installed',flush=True)
+        # Render's local SQLite is rebuilt on deploy. Refill today's TEMP preparation automatically.
+        # Run in background so startup and the iPhone board remain nonblocking.
+        try:
+            import threading
+            def _prepare_today_after_boot():
+                try:
+                    import time; time.sleep(2)
+                    import sqlite3
+                    from datetime import datetime, timezone, timedelta
+                    from preparation_service_v01 import prepare_all_venues
+                    _con=sqlite3.connect('/opt/render/project/src/app/data/boatrace.sqlite')
+                    try:
+                        _today=datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+                        print('[BOOT_PREP] start '+_today,flush=True)
+                        _res=prepare_all_venues(_con,_today,'cache/live')
+                        print('[BOOT_PREP] done '+repr(_res),flush=True)
+                    finally:_con.close()
+                except Exception as _e:
+                    print('[BOOT_PREP] error '+repr(_e),flush=True)
+            threading.Thread(target=_prepare_today_after_boot,daemon=True).start()
+        except Exception as _e:
+            print('[BOOT_PREP] launch_error '+repr(_e),flush=True)
 except Exception as e:print('[PATCH_SERVER] error '+repr(e),flush=True)
 print('[PATCH_BOOT] forced='+','.join(sorted(FORCED_PATCH_MODULES)),flush=True)
