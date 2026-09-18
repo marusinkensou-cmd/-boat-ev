@@ -104,7 +104,6 @@ def _access_token():
         client_id[-28:], hashlib.sha256(client_id.encode()).hexdigest()[:12], len(client_secret), len(refresh_token)))
     body = urllib.parse.urlencode({
         'client_id': client_id,
-        'client_secret': client_secret,
         'refresh_token': refresh_token,
         'grant_type': 'refresh_token',
     }).encode()
