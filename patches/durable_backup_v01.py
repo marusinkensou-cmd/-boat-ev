@@ -13,6 +13,7 @@ import os
 import sqlite3
 import urllib.parse
 import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1
@@ -102,8 +103,19 @@ def _access_token():
         'grant_type': 'refresh_token',
     }).encode()
     req = urllib.request.Request('https://oauth2.googleapis.com/token', data=body, method='POST')
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read().decode())['access_token']
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return json.loads(r.read().decode())['access_token']
+    except urllib.error.HTTPError as e:
+        # Preserve Google's OAuth error code/description for diagnosis without logging credentials.
+        raw = e.read().decode('utf-8', errors='replace')
+        try:
+            payload = json.loads(raw)
+            code = payload.get('error', 'oauth_error')
+            desc = payload.get('error_description', '')
+            raise RuntimeError('Google OAuth token error: %s%s' % (code, (': ' + desc) if desc else '')) from None
+        except json.JSONDecodeError:
+            raise RuntimeError('Google OAuth token HTTP %s' % e.code) from None
 
 
 def _request(url, method='GET', data=None, headers=None):
