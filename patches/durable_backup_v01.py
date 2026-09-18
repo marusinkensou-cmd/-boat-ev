@@ -97,9 +97,9 @@ def _access_token():
     if not _oauth_configured():
         raise RuntimeError('Google Drive OAuth is not configured')
     body = urllib.parse.urlencode({
-        'client_id': os.environ['GOOGLE_DRIVE_CLIENT_ID'],
-        'client_secret': os.environ['GOOGLE_DRIVE_CLIENT_SECRET'],
-        'refresh_token': os.environ['GOOGLE_DRIVE_REFRESH_TOKEN'],
+        'client_id': os.environ['GOOGLE_DRIVE_CLIENT_ID'].strip(),
+        'client_secret': os.environ['GOOGLE_DRIVE_CLIENT_SECRET'].strip(),
+        'refresh_token': os.environ['GOOGLE_DRIVE_REFRESH_TOKEN'].strip(),
         'grant_type': 'refresh_token',
     }).encode()
     req = urllib.request.Request('https://oauth2.googleapis.com/token', data=body, method='POST')
