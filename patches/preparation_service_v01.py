@@ -51,7 +51,13 @@ def prepare_all_venues(con, race_date=None, cache_dir='cache/live'):
                 (race_date, jcd),
             ).fetchall()
             item['races_seeded'] = len(rows)
-            for race_id, race_no in rows:
+            now = datetime.now(JST)
+            upcoming = [(race_id, race_no) for race_id, race_no in rows
+                        if (con.execute('SELECT deadline FROM races WHERE race_id=?',(race_id,)).fetchone() or [None])[0]
+                        and datetime.fromisoformat(con.execute('SELECT deadline FROM races WHERE race_id=?',(race_id,)).fetchone()[0]).replace(tzinfo=JST) > now]
+            # Mainline priority: prepare the next two races first. Older/later races are not allowed
+            # to delay the iPhone decision flow.
+            for race_id, race_no in upcoming[:2]:
                 entry_count = con.execute('SELECT COUNT(*) FROM entries WHERE race_id=?', (race_id,)).fetchone()[0]
                 if entry_count < 6:
                     try:
