@@ -56,6 +56,34 @@ def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/
         try:m=mins_to_deadline(now,dl)
         except Exception:continue
         if m>0:cand.append((m,rid,jcd,rno))
+    # Recovery path only: a selected venue can be missing after a cold boot or incomplete preparation.
+    # Never classify missing local rows as a non-running venue. Seed its official schedule,
+    # then prepare the next two entry lists before evaluating the next race.
+    if allowed and not cand:
+        from racelist_live_v12 import seed_venue_races, refresh_racelist
+        for requested_jcd in sorted(allowed):
+            try:
+                seed_venue_races(con,today,requested_jcd,cache_dir)
+                con.commit()
+                report('venue_schedule_recovered',jcd=requested_jcd)
+            except Exception as exc:
+                report('venue_schedule_error',jcd=requested_jcd,error=str(exc))
+        rows=con.execute('SELECT race_id,jcd,race_no,deadline FROM races WHERE race_date=? AND deadline IS NOT NULL ORDER BY deadline,jcd,race_no',(today,)).fetchall()
+        cand=[]
+        for rid,jcd,rno,dl in rows:
+            if str(jcd).zfill(2) not in allowed:continue
+            try:m=mins_to_deadline(now,dl)
+            except Exception:continue
+            if m>0:cand.append((m,rid,jcd,rno))
+    for mins,rid,jcd,rno in cand[:2]:
+        ec=con.execute('SELECT COUNT(*) FROM entries WHERE race_id=?',(rid,)).fetchone()[0]
+        if ec<6:
+            try:
+                refresh_racelist(con,today,jcd,rno,cache_dir)
+                con.commit()
+                report('venue_entries_recovered',jcd=jcd,race_no=rno)
+            except Exception as exc:
+                report('venue_entries_error',jcd=jcd,race_no=rno,error=str(exc))
     selected=cand[:1];updates=[];report('selected',races_total=len(selected),venues_requested=len(allowed))
     if selected:
         mins,rid,jcd,rno=selected[0];report('race_start',race_index=1,races_total=1,jcd=jcd,race_no=rno);updates.append(_evaluate_one(con,now,today,mins,rid,jcd,rno,cache_dir,progress));report('race_done',race_index=1,races_total=1,jcd=jcd,race_no=rno)
