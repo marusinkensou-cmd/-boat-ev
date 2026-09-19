@@ -44,6 +44,7 @@ def _evaluate_one(con,now,today,mins,rid,jcd,rno,cache_dir,progress=None):
     return item
 
 def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/live',progress=None,selected_jcds=None):
+    from racelist_live_v12 import refresh_racelist
     now=now or datetime.now(JST);today=now.date().isoformat()
     def report(stage,**extra):
         if progress:
@@ -60,7 +61,7 @@ def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/
     # Never classify missing local rows as a non-running venue. Seed its official schedule,
     # then prepare the next two entry lists before evaluating the next race.
     if allowed and not cand:
-        from racelist_live_v12 import seed_venue_races, refresh_racelist
+        from racelist_live_v12 import seed_venue_races
         for requested_jcd in sorted(allowed):
             try:
                 seed_venue_races(con,today,requested_jcd,cache_dir)
