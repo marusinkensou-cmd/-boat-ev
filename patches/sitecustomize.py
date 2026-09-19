@@ -46,14 +46,26 @@ try:
         new='''    def board(self):\n        con=sqlite3.connect(self.db)\n        try:\n            now=datetime.now(JST); discovery_error=None
             # User-facing board must be an instant local/cache read. Official network discovery is preparation work.
             board=build_board(con,now)
+            # Venue availability must come from today's locally seeded race schedule, not
+            # from build_board(), which intentionally exposes only a narrow race window.
             active=[]; seen=set()
-            for row in board:
-                if float(row.get("minutes_to_deadline") or 0)<=0: continue
-                j=str(row.get("jcd","")).zfill(2)
-                if not j or j in seen: continue
+            venue_names={str(row.get("jcd","")).zfill(2):row.get("venue") for row in board}
+            today=now.date().isoformat()
+            for jcd, deadline in con.execute("SELECT jcd,deadline FROM races WHERE race_date=? ORDER BY jcd,race_no",(today,)).fetchall():
+                j=str(jcd).zfill(2)
+                if j in seen or not deadline: continue
+                try:
+                    if len(str(deadline))<=5:
+                        hh,mm=map(int,str(deadline).split(':'))
+                        dl=now.replace(hour=hh,minute=mm,second=0,microsecond=0)
+                    else:
+                        dl=datetime.fromisoformat(str(deadline))
+                        if dl.tzinfo is None: dl=dl.replace(tzinfo=JST)
+                    if dl<=now: continue
+                except Exception: continue
                 seen.add(j)
-                active.append({"jcd":j,"venue":row.get("venue") or j})
-            source="local_prepared_board_with_remaining_race"
+                active.append({"jcd":j,"venue":venue_names.get(j) or j})
+            source="local_today_schedule_with_remaining_race"
             return {"generated_at":now.isoformat(),"active_venues":active,"active_venues_source":source,"discovery_error":discovery_error,"board":board}\n        finally: con.close()\n\n    def prepare_all(self,race_date=None):\n        con=sqlite3.connect(self.db)\n        try:\n            from preparation_service_v01 import prepare_all_venues\n            return prepare_all_venues(con,race_date,"cache/live")\n        finally: con.close()\n'''
         if old in text:text=text.replace(old,new,1)
         elif 'active_venues_source' in text and 'def prepare_all' not in text:
