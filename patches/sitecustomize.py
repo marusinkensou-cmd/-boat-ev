@@ -51,19 +51,25 @@ try:
             active=[]; seen=set()
             venue_names={str(row.get("jcd","")).zfill(2):row.get("venue") for row in board}
             today=now.date().isoformat()
-            for jcd, deadline in con.execute("SELECT jcd,deadline FROM races WHERE race_date=? ORDER BY jcd,race_no",(today,)).fetchall():
-                j=str(jcd).zfill(2)
-                if j in seen or not deadline: continue
-                try:
-                    if len(str(deadline))<=5:
-                        hh,mm=map(int,str(deadline).split(':'))
-                        dl=now.replace(hour=hh,minute=mm,second=0,microsecond=0)
-                    else:
-                        dl=datetime.fromisoformat(str(deadline))
-                        if dl.tzinfo is None: dl=dl.replace(tzinfo=JST)
-                    if dl<=now: continue
-                except Exception: continue
-                seen.add(j)
+            rows=con.execute("SELECT jcd,deadline FROM races WHERE race_date=? ORDER BY jcd,race_no",(today,)).fetchall()
+            by_venue={}
+            for jcd,deadline in rows:
+                by_venue.setdefault(str(jcd).zfill(2),[]).append(deadline)
+            for j,deadlines in by_venue.items():
+                has_remaining=False
+                for deadline in deadlines:
+                    if not deadline: continue
+                    try:
+                        if len(str(deadline))<=5:
+                            hh,mm=map(int,str(deadline).split(':'))
+                            dl=now.replace(hour=hh,minute=mm,second=0,microsecond=0)
+                        else:
+                            dl=datetime.fromisoformat(str(deadline))
+                            if dl.tzinfo is None: dl=dl.replace(tzinfo=JST)
+                        if dl>now:
+                            has_remaining=True; break
+                    except Exception: continue
+                if not has_remaining: continue
                 active.append({"jcd":j,"venue":venue_names.get(j) or j})
             source="local_today_schedule_with_remaining_race"
             return {"generated_at":now.isoformat(),"active_venues":active,"active_venues_source":source,"discovery_error":discovery_error,"board":board}\n        finally: con.close()\n\n    def prepare_all(self,race_date=None):\n        con=sqlite3.connect(self.db)\n        try:\n            from preparation_service_v01 import prepare_all_venues\n            return prepare_all_venues(con,race_date,"cache/live")\n        finally: con.close()\n'''
