@@ -103,7 +103,7 @@ try:
                     finally:_con.close()
                 except Exception as _e:
                     print('[BOOT_PREP] error '+repr(_e),flush=True)
-            threading.Thread(target=_prepare_today_after_boot,daemon=True).start()
+            threading.Thread(target=_prepare_today_after_boot,name='boat-ev-boot-preparation',daemon=True).start()
         except Exception as _e:
             print('[BOOT_PREP] launch_error '+repr(_e),flush=True)
 except Exception as e:print('[PATCH_SERVER] error '+repr(e),flush=True)
