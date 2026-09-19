@@ -52,9 +52,20 @@ def prepare_all_venues(con, race_date=None, cache_dir='cache/live'):
             ).fetchall()
             item['races_seeded'] = len(rows)
             now = datetime.now(JST)
-            upcoming = [(race_id, race_no) for race_id, race_no in rows
-                        if (con.execute('SELECT deadline FROM races WHERE race_id=?',(race_id,)).fetchone() or [None])[0]
-                        and datetime.fromisoformat(con.execute('SELECT deadline FROM races WHERE race_id=?',(race_id,)).fetchone()[0]).replace(tzinfo=JST) > now]
+            def _is_upcoming(race_id):
+                raw=(con.execute('SELECT deadline FROM races WHERE race_id=?',(race_id,)).fetchone() or [None])[0]
+                if not raw: return False
+                try:
+                    if len(raw)<=5:
+                        hh,mm=map(int,raw.split(':'))
+                        deadline=now.replace(hour=hh,minute=mm,second=0,microsecond=0)
+                    else:
+                        deadline=datetime.fromisoformat(raw)
+                        if deadline.tzinfo is None: deadline=deadline.replace(tzinfo=JST)
+                    return deadline > now
+                except Exception:
+                    return False
+            upcoming = [(race_id, race_no) for race_id, race_no in rows if _is_upcoming(race_id)]
             # Mainline priority: prepare the next two races first. Older/later races are not allowed
             # to delay the iPhone decision flow.
             for race_id, race_no in upcoming[:2]:
