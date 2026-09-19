@@ -43,7 +43,7 @@ def _evaluate_one(con,now,today,mins,rid,jcd,rno,cache_dir,progress=None):
     item['quality']=status(con,rid)
     return item
 
-def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/live',progress=None,selected_jcds=None):
+def _refresh_for_iphone_impl(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/live',progress=None,selected_jcds=None):
     from racelist_live_v12 import refresh_racelist
     now=now or datetime.now(JST);today=now.date().isoformat()
     def report(stage,**extra):
@@ -90,3 +90,13 @@ def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/
         mins,rid,jcd,rno=selected[0];report('race_start',race_index=1,races_total=1,jcd=jcd,race_no=rno);updates.append(_evaluate_one(con,now,today,mins,rid,jcd,rno,cache_dir,progress));report('race_done',race_index=1,races_total=1,jcd=jcd,race_no=rno)
     board=build_board(con,datetime.now(JST));report('done',races_updated=len(updates))
     return {'generated_at':datetime.now(JST).isoformat(),'settlement':{'skipped_for_speed':True},'actual_stats':cumulative_actual_stats(con),'stats_today':stats(con,today),'stats_all':stats(con),'selected_jcds':list(allowed),'races_updated':len(updates),'refresh_scope':'live_delta_next_race_only','updates':updates,'board':board}
+
+
+def refresh_for_iphone(con,now=None,max_races=1,horizon_min=90,cache_dir='cache/live',progress=None,selected_jcds=None):
+    """Prioritize the user's final update without changing its prediction or data path."""
+    from official_live_v10 import USER_REFRESH_ACTIVE
+    USER_REFRESH_ACTIVE.set()
+    try:
+        return _refresh_for_iphone_impl(con,now,max_races,horizon_min,cache_dir,progress,selected_jcds)
+    finally:
+        USER_REFRESH_ACTIVE.clear()
