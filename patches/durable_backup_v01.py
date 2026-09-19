@@ -176,9 +176,71 @@ def drive_restore(con):
     return result
 
 
+SUPABASE_URL = 'https://msgtodggnvufosnqalds.supabase.co'
+SUPABASE_BACKUP_ID = 'master_trace_v1'
+
+
+def supabase_configured():
+    return bool(os.getenv('SUPABASE_SECRET_KEY'))
+
+
+def _supabase_request(method, suffix, data=None, headers=None):
+    key = os.environ['SUPABASE_SECRET_KEY'].strip()
+    if not key.startswith('sb_secret_'):
+        raise ValueError('SUPABASE_SECRET_KEY must be a Supabase secret API key')
+    h = {'apikey': key, 'Accept': 'application/json'}
+    h.update(headers or {})
+    req = urllib.request.Request(
+        SUPABASE_URL + '/rest/v1/boat_ev_durable_state' + suffix,
+        data=data, headers=h, method=method,
+    )
+    with urllib.request.urlopen(req, timeout=30) as response:
+        return json.loads(response.read().decode('utf-8'))
+
+
+def supabase_backup(con):
+    payload = export_payload(con)
+    body = json.dumps({'id': SUPABASE_BACKUP_ID, 'payload': payload}, ensure_ascii=False).encode('utf-8')
+    rows = _supabase_request(
+        'POST', '?on_conflict=id', body,
+        {'Content-Type': 'application/json', 'Prefer': 'resolution=merge-duplicates,return=representation'},
+    )
+    if not isinstance(rows, list) or len(rows) != 1 or rows[0].get('id') != SUPABASE_BACKUP_ID:
+        raise RuntimeError('Supabase backup verification failed')
+    return {'ok': True, 'backend': 'supabase', 'exported_at': payload['exported_at']}
+
+
+def supabase_restore(con):
+    rows = _supabase_request('GET', '?id=eq.' + SUPABASE_BACKUP_ID + '&select=payload')
+    if not isinstance(rows, list) or len(rows) > 1:
+        raise RuntimeError('Supabase restore response is invalid')
+    if not rows:
+        return {'ok': True, 'backend': 'supabase', 'found': False, 'restored': {}}
+    result = restore_payload(con, rows[0]['payload'])
+    result.update({'ok': True, 'backend': 'supabase', 'found': True})
+    return result
+
+
+def durable_backup(con):
+    if supabase_configured():
+        return supabase_backup(con)
+    if _oauth_configured():
+        return drive_backup(con)
+    raise RuntimeError('No durable storage configured')
+
+
+def durable_restore(con):
+    if supabase_configured():
+        return supabase_restore(con)
+    if _oauth_configured():
+        return drive_restore(con)
+    raise RuntimeError('No durable storage configured')
+
+
 def status():
     return {
-        'configured': _oauth_configured(),
+        'configured': supabase_configured() or _oauth_configured(),
+        'backend': 'supabase' if supabase_configured() else 'google_drive' if _oauth_configured() else None,
         'scope': DRIVE_SCOPE,
         'backup_name': os.getenv('GOOGLE_DRIVE_BACKUP_NAME', 'boat-ev-durable-v1.json'),
         'durable_tables': list(DURABLE_TABLES),

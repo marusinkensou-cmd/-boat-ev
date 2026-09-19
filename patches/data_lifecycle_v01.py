@@ -17,9 +17,9 @@ def _now():
 def _durable_backup(con):
     """Best-effort durable copy. Runtime must continue if Drive is not configured/unavailable."""
     try:
-        from durable_backup_v01 import status, drive_backup
+        from durable_backup_v01 import status, durable_backup
         if status().get('configured'):
-            return drive_backup(con)
+            return durable_backup(con)
     except Exception as e:
         print('[DURABLE_BACKUP] MASTER error '+repr(e), flush=True)
     return None

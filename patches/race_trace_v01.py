@@ -17,9 +17,9 @@ from datetime import datetime, timezone
 def _durable_backup(con):
     """Best-effort durable copy after a TRACE mutation."""
     try:
-        from durable_backup_v01 import status, drive_backup
+        from durable_backup_v01 import status, durable_backup
         if status().get('configured'):
-            return drive_backup(con)
+            return durable_backup(con)
     except Exception as e:
         print('[DURABLE_BACKUP] TRACE error '+repr(e), flush=True)
     return None

@@ -25,7 +25,7 @@ except Exception as e:print('[PATCH_PWA] error '+repr(e),flush=True)
 # Restore durable MASTER/TRACE before the HTTP server starts.  No-op until OAuth is configured.
 try:
     import sqlite3
-    from durable_backup_v01 import status as _durable_status, drive_restore as _drive_restore
+    from durable_backup_v01 import status as _durable_status, durable_restore as _durable_restore
     _db='/opt/render/project/src/app/data/boatrace.sqlite'
     if _durable_status().get('configured') and os.path.isfile(_db):
         _con=sqlite3.connect(_db)
@@ -33,7 +33,7 @@ try:
             from data_lifecycle_v01 import ensure_lifecycle_schema
             from race_trace_v01 import ensure_trace_schema
             ensure_lifecycle_schema(_con);ensure_trace_schema(_con)
-            print('[DURABLE_RESTORE] '+repr(_drive_restore(_con)),flush=True)
+            print('[DURABLE_RESTORE] '+repr(_durable_restore(_con)),flush=True)
         finally:_con.close()
     else: print('[DURABLE_RESTORE] not configured',flush=True)
 except Exception as e: print('[DURABLE_RESTORE] error '+repr(e),flush=True)
