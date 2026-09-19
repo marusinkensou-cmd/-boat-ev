@@ -83,6 +83,32 @@ def prepare_all_venues(con, race_date=None, cache_dir='cache/live'):
             result['errors'].append({'jcd': jcd, 'error': str(exc)})
         result['venues'].append(item)
 
+    # Once every venue's imminent two races have been prioritized, complete the
+    # remaining published entry lists. This keeps the next race ready when the
+    # visible two-race window advances, without blocking the first venue pass.
+    for item in result['venues']:
+        jcd = item['jcd']
+        try:
+            remaining = con.execute(
+                'SELECT race_id,race_no FROM races WHERE race_date=? AND jcd=? AND deadline IS NOT NULL ORDER BY race_no',
+                (race_date, jcd),
+            ).fetchall()
+            for race_id, race_no in remaining:
+                entry_count = con.execute('SELECT COUNT(*) FROM entries WHERE race_id=?',(race_id,)).fetchone()[0]
+                if entry_count >= 6:
+                    continue
+                try:
+                    refresh_racelist(con, race_date, jcd, race_no, cache_dir)
+                    con.commit()
+                    entry_count = con.execute('SELECT COUNT(*) FROM entries WHERE race_id=?',(race_id,)).fetchone()[0]
+                    if entry_count >= 6:
+                        item['entries_prepared'] += 1
+                except Exception as exc:
+                    item['entry_errors'].append({'race_no':race_no,'error':str(exc)})
+            con.commit()
+        except Exception as exc:
+            result['errors'].append({'jcd':jcd,'stage':'remaining_entries','error':str(exc)})
+
     result['ok'] = not result['errors']
     result['venues_found'] = len(venues)
     result['races_prepared'] = sum(v['entries_prepared'] for v in result['venues'])
