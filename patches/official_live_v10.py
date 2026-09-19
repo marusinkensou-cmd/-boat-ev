@@ -12,7 +12,6 @@ Important invariants:
 import hashlib
 import re
 import time
-import threading
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode
@@ -23,8 +22,6 @@ BASE = "https://www.boatrace.jp/owpc/pc/race"
 USER_AGENT = "Mozilla/5.0 (compatible; BOATRACE-EV-Research/1.0)"
 MIN_INTERVAL_SEC = 2.0
 _last_fetch = 0.0
-# The user-triggered final update takes priority over background venue preparation.
-USER_REFRESH_ACTIVE = threading.Event()
 
 
 def official_url(kind, date, jcd, race_no):
@@ -39,9 +36,6 @@ def fetch_html(url, cache_dir="cache/live", max_age_sec=45, timeout=15):
     p = cache / (hashlib.sha256(url.encode()).hexdigest() + ".html")
     if p.exists() and time.time() - p.stat().st_mtime <= max_age_sec:
         return p.read_text(encoding="utf-8", errors="replace"), "cache"
-    if threading.current_thread().name == 'boat-ev-boot-preparation':
-        while USER_REFRESH_ACTIVE.is_set():
-            time.sleep(0.1)
     wait = MIN_INTERVAL_SEC - (time.time() - _last_fetch)
     if wait > 0:
         time.sleep(wait)
